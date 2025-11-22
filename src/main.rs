@@ -1,9 +1,20 @@
 use std::{
+  env, fs,
   io::{BufRead, BufReader, Write},
   net::{TcpListener, TcpStream},
 };
 
-fn handle_client(mut stream: TcpStream) {
+fn welcome() {
+  println!("Now running Eclipse web server!! :)");
+  println!(
+    "Current directory: {}",
+    env::current_dir()
+      .expect("Cannot find current dir, panicing.") // i see no reason to handle an error like this if stuff is so fucked up that this errors out.
+      .display()
+  );
+}
+
+fn handle_client(mut stream: TcpStream) -> std::io::Result<()> {
   // for some reason on windows i need to read headers to prevent the connection
   // from saying it was closed
   let mut reader = BufReader::new(&mut stream);
@@ -12,41 +23,37 @@ fn handle_client(mut stream: TcpStream) {
   // read until hit the blank line that terminates headers or EOF.
   loop {
     request_line.clear();
-    match reader.read_line(&mut request_line) {
-      // EOF
-      Ok(0) => break,
-      // end of headers
-      Ok(_) if request_line == "\r\n" => break,
-      Ok(_) => continue,
-      Err(err) => {
-        eprintln!("Failed to read request: {}", err);
-        break;
-      }
+    match reader.read_line(&mut request_line)? {
+      0 => break,                           // EOF
+      _ if request_line == "\r\n" => break, // end of headers
+      _ => continue,
     }
   }
 
-  let body = "OK";
+  let body = fs::read_to_string("www/index.html")?;
   let response = format!(
-    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n{}",
+    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
     body.len(),
     body
   );
 
-  if let Err(err) = stream.write_all(response.as_bytes()) {
-    eprintln!("Failed to write response: {}", err);
-    return;
-  }
-  if let Err(err) = stream.flush() {
-    eprintln!("Failed to flush response: {}", err);
-  }
+  stream.write_all(response.as_bytes())?;
+  stream.flush()?;
+  Ok(())
 }
 
 fn main() -> std::io::Result<()> {
+  welcome();
+
   let listener: TcpListener = TcpListener::bind("127.0.0.1:80")?;
 
   for stream in listener.incoming() {
     match stream {
-      Ok(stream) => handle_client(stream),
+      Ok(stream) => {
+        if let Err(err) = handle_client(stream) {
+          eprintln!("Client error: {}", err);
+        }
+      }
       Err(err) => eprintln!("Incoming connection error: {}", err),
     }
   }
